@@ -28,8 +28,6 @@ def read_edf_file(file):
         print("samplefrequency: %f" % f.getSampleFrequency(1))
         print("read header: " + str(f.getPatientName()))
         print("read anotations: " + str(f.readAnnotations()))
-        # print("samplefrequency: %f" % f.getSampleFrequency(27))
-        # f._close()
     return f
 
 
@@ -62,43 +60,40 @@ def create_file_dictionary(folder_path):
 # create_file_dictionary('testdata/EGE/')
 
 
-def stat_scratch(channels, file):
-    f = read_edf_file(file)
-    i = 0
-    for channel in channels:
-        i += 1
-        mpl.rcParams['axes.titlesize'] = 'small'
-        _x = f.readSignal(channel)
-        lead = f.getLabel(channel)
-        if False:
-            result = []
-            result.append(len(_x))  # Число элементов выборки
-            result.append(np.mean(_x))  # среднее
-            result.append((np.min(_x), np.max(_x)))  # (min, max)
-            result.append(np.std(_x))  # стандартное отклонение
-            result.append(100.0 * result[-1] / result[0])  # коэффициент вариации (Пирсона)
-            result.append((np.percentile(_x, 25), np.percentile(_x, 50), np.percentile(_x, 75)))  # квартили
-            result.append(st.mode(_x))  # мода
-            result.append(st.skew(_x))  # асимметрия
-            result.append(st.kurtosis(_x))  # эксцесс
-            _range = np.linspace(0.9 * np.min(_x), 1.1 * np.max(_x), 100)  # область определения для оценки плотности
-            result.append((_range, st.gaussian_kde(_x)(_range)))  # оценка плотности распределения
+def stat_scratch(data):
+    result = []
+    result.append(len(data))  # Число элементов выборки
+    result.append(np.mean(data))  # среднее
+    result.append((np.min(data), np.max(data)))  # (min, max)
+    result.append(np.std(data))  # стандартное отклонение
+    result.append(100.0 * result[-1] / result[0])  # коэффициент вариации (Пирсона)
+    result.append((np.percentile(data, 25), np.percentile(data, 50), np.percentile(data, 75)))  # квартили
+    result.append(st.mode(data))  # мода
+    result.append(st.skew(data))  # асимметрия
+    result.append(st.kurtosis(data))  # эксцесс
+    range = np.linspace(0.9 * np.min(data), 1.1 * np.max(data), 100)  # область определения для оценки плотности
+    result.append((range, st.gaussian_kde(data)(range)))  # оценка плотности распределения
+    # Вычисление важных показателей
+    n, m, minmax, s, cv, perct, mode, skew, kurt, kde = tuple(result)
+    print('Число элементов выборки: {0:d}'.format(n))
+    print('Среднее значение: {0:.4f}'.format(m))
+    print('Минимальное и максимальное значения: ({0:.4f}, {1:.4f})'.format(*minmax))
+    print('Стандартное отклонение: {0:.4f}'.format(s))
+    print('Коэффициент вариации (Пирсона): {0:.4f}'.format(cv))
+    print('Квартили: (25%) = {0:.4f}, (50%) = {1:.4f}, (75%) = {2:.4f}'.format(*perct))
+    print('Коэффициент асимметрии: {0:.4f}'.format(skew))
+    print('Коэффициент эксцесса: {0:.4f}'.format(kurt))
+    print('оценка плотности распределения: {0:.4f}'.format(kde))
 
-            # Вычисление важных показателей
-            n, m, minmax, s, cv, perct, mode, skew, kurt, kde = tuple(result)
-            print('Число элементов выборки: {0:d}'.format(n))
-            print('Среднее значение: {0:.4f}'.format(m))
-            print('Минимальное и максимальное значения: ({0:.4f}, {1:.4f})'.format(*minmax))
-            print('Стандартное отклонение: {0:.4f}'.format(s))
-            # print('Коэффициент вариации (Пирсона): {0:.4f}'.format(cv))
-            print('Квартили: (25%) = {0:.4f}, (50%) = {1:.4f}, (75%) = {2:.4f}'.format(*perct))
-            print('Коэффициент асимметрии: {0:.4f}'.format(skew))
-            print('Коэффициент эксцесса: {0:.4f}'.format(kurt))
-            # print('оценка плотности распределения: {0:.4f}'.format(kde))
 
-    _x_around = np.around(_x)
-    f._close()
-    return _x_around, lead
+def create_signal(l):
+    signal = [3*np.cos(np.pi*i/20) for i in range(l)]
+    return signal
+
+
+def create_random_signal(l):
+    r_signal = 2 + 0.3*np.random.randn(l)
+    return r_signal
 
 
 def local_rank_coding(data, rank_quantity):
@@ -114,7 +109,7 @@ def local_rank_coding(data, rank_quantity):
 def shanon_entropy(data, window_size):
     ent = np.zeros(len(data) - window_size)
     for i in range(len(data) - window_size):
-        data_chunk = data[0+i:window_size+i]
+        data_chunk = data[0+i : window_size+i]
         # Create a frequency data
         freq_list = []
         for entry in set(data_chunk):
@@ -256,16 +251,22 @@ def conditional_entropy(data, min=1,max=10):
         print("for L = "+str(i)+" conditional entropy = "+ str(cond_ent[i-1]))
     return cond_ent
 
-def theta_entropy(data, m, r=None, phase_width=None):
+def theta_entropy(data, m, r=None, phase_width=0.1):
+    '''
+    calculate theta for aproximate entropy for window of size m
+    be aware - complexity of the algorithm O(n^2) where n = len(data)
+    :param data: 1-D array of data
+    :param m: window size
+    :param r: phase space cell radius, if None calculate from phase_width
+    :param phase_width: parameter for phase space cell radius calculation, factor of standart deviation of data
+    :return: theta - entropy for m
+    '''
     data_array = np.zeros((len(data) - m + 1, m))
     C = np.zeros(len(data_array))
 
-    if phase_width is None:
-        phase_width = 0.1
-
     if r is None:
         r = phase_width*np.std(data)
-        print('r = '+str(r))
+        # print('r = '+str(r))
 
     for index in range(len(data) - m + 1):
         data_array[index] = data[index:index + m]
@@ -282,7 +283,17 @@ def theta_entropy(data, m, r=None, phase_width=None):
     return theta
 
 
-def aproximate_entropy(data, m_min=1, m_max=6, r=None, phase_width=None):
+def aproximate_entropy(data, m_min=1, m_max=6, r=None, phase_width=0.1):
+    '''
+    Calculate aproximate entropy ApEn for window sizes from given range
+    be aware - complexity of the algorithm O(n^2) where n = len(data)
+    :param data: 1-D array of data
+    :param m_min: minimal window size
+    :param m_max: maximum window sizes
+    :param r: phase space cell radius, if None calculate from phase_width
+    :param phase_width: parameter for phase space cell radius calculation, factor of standart deviation of data
+    :return: aprox_ent: 1-D array length m_max-m_min
+    '''
     aprox_ent = np.zeros(m_max-m_min+1)
     theta = np.zeros(m_max-m_min+2)
     for i in range(m_min,m_max+2):
@@ -294,30 +305,27 @@ def aproximate_entropy(data, m_min=1, m_max=6, r=None, phase_width=None):
     return aprox_ent
 
 
-def create_signal(l):
-    signal = [3*np.cos(np.pi*i/20) for i in range(l)]
-    return signal
-
-
-def create_random_signal(l):
-    r_signal = 2 + 0.3*np.random.randn(l)
-    return r_signal
-
-
 def plot_aproximate_entropy(eeg_file_dict):
     if not os.path.exists(folder_name_for_aproximate_entropy):
         os.makedirs(folder_name_for_aproximate_entropy)
     for key in eeg_file_dict.keys():
         for chanel in range(10):
-            eeg = get_data_from_chanel(1, "testdata/EGE/" + eeg_file_dict[key][0] + ".edf")
-            lead_eeg = get_lead_name_by_channel(1, "testdata/EGE/" + eeg_file_dict[key][0] + ".edf")
-            aprox_entropy = aproximate_entropy(avg_fiter(eeg, filter_window_size, filter_count), 1, 6, phase_width=0.1)
+            eeg_spec = get_data_from_chanel(chanel, "testdata/EGE/" + eeg_file_dict[key][0] + ".edf")
+            lead_eeg_spec = get_lead_name_by_channel(chanel, "testdata/EGE/" + eeg_file_dict[key][0] + ".edf")
+            aprox_entropy = aproximate_entropy(avg_fiter(eeg_spec, filter_window_size, filter_count), 1, 6, phase_width=0.1)
 
-            eeg_f, lead_eeg_f = stat_scratch([chanel], "testdata/EGE/" + eeg_file_dict[key][1] + ".edf")
-            aprox_entropy_f = aproximate_entropy(avg_fiter(eeg_f, filter_window_size, filter_count), 1, 6, phase_width=0.1)
+            eeg_nonspec = get_data_from_chanel(chanel, "testdata/EGE/" + eeg_file_dict[key][1] + ".edf")
+            lead_eeg_nonspec = get_lead_name_by_channel(chanel, "testdata/EGE/" + eeg_file_dict[key][1] + ".edf")
+            aprox_entropy_f = aproximate_entropy(avg_fiter(eeg_nonspec, filter_window_size, filter_count), 1, 6, phase_width=0.1)
 
-            eeg_c, lead_eeg_c = stat_scratch([chanel], "testdata/EGE/" + eeg_file_dict[key][2] + ".edf")
-            aprox_entropy_c = aproximate_entropy(avg_fiter(eeg_c, filter_window_size, filter_count), 1, 6, phase_width=0.1)
+            eeg_control = get_data_from_chanel(chanel, "testdata/EGE/" + eeg_file_dict[key][2] + ".edf")
+            lead_eeg_control = get_lead_name_by_channel(chanel, "testdata/EGE/" + eeg_file_dict[key][2] + ".edf")
+            aprox_entropy_c = aproximate_entropy(avg_fiter(eeg_control, filter_window_size, filter_count), 1, 6, phase_width=0.1)
+
+            if lead_eeg_spec != lead_eeg_nonspec:
+                print('lead_eeg_spec != lead_eeg_nonspec')
+            if lead_eeg_spec != lead_eeg_control:
+                print('lead_eeg_spec != lead_eeg_control')
 
             fig, ax1 = plt.subplots()
             fig.set_size_inches(5, 5)
@@ -327,7 +335,7 @@ def plot_aproximate_entropy(eeg_file_dict):
             ax1.plot(aprox_entropy_f, linewidth=0.8, color='red')
             ax1.plot(aprox_entropy_c, linewidth=0.8, color='blue')
 
-            ax1.set_title('Испытуемый ' + eeg_file_dict[key][0][0] + ' отведение ' + lead_eeg[4:], fontsize=15)
+            ax1.set_title('Испытуемый ' + eeg_file_dict[key][0][0] + ' отведение ' + lead_eeg_spec[4:], fontsize=15)
             ax1.set_ylabel('ApEn(m)', color='black')
             ax1.set_xlabel('m', color='black')
             ax1.grid(b=True, linewidth=0.5, color='black', linestyle='--')
@@ -337,8 +345,8 @@ def plot_aproximate_entropy(eeg_file_dict):
 
             fig.tight_layout()
             print('exam ' + eeg_file_dict[key][0][0] + ' chanel ' + str(chanel) + ' done')
-            plt.savefig(folder_name_for_aproximate_entropy + 'ex' + eeg_file_dict[key][0][0] + lead_eeg[4:] + '.png', format='png')
-            text_file = open(folder_name_for_aproximate_entropy + 'ex' + eeg_file_dict[key][0][0] + lead_eeg[4:] + '.txt', 'w')
+            plt.savefig(folder_name_for_aproximate_entropy + 'ex' + eeg_file_dict[key][0][0] + lead_eeg_spec[4:] + '.png', format='png')
+            text_file = open(folder_name_for_aproximate_entropy + 'ex' + eeg_file_dict[key][0][0] + lead_eeg_spec[4:] + '.txt', 'w')
             text_file.write(str(aprox_entropy)+'\n'+str(aprox_entropy_f)+'\n'+str(aprox_entropy_c))
             text_file.close()
             plt.clf()
@@ -351,17 +359,25 @@ def plot_cond_entropy(eeg_file_dict):
         os.makedirs(folder_name_for_cond_entropy)
     for key in eeg_file_dict.keys():
         for chanel in range(10):
-            eeg, lead_eeg = stat_scratch([chanel], "testdata/EGE/" + eeg_file_dict[key][0] + ".edf")
-            cond_entropy = conditional_entropy(local_rank_coding(avg_fiter(eeg, filter_window_size, filter_count), rank_quantity), 1, 10)
+            eeg_spec = get_data_from_chanel(chanel, "testdata/EGE/" + eeg_file_dict[key][0] + ".edf")
+            lead_eeg_spec = get_lead_name_by_channel(chanel, "testdata/EGE/" + eeg_file_dict[key][0] + ".edf")
+            cond_entropy = conditional_entropy(local_rank_coding(avg_fiter(eeg_spec, filter_window_size, filter_count), rank_quantity), 1, 10)
 
-            eeg_f, lead_eeg_f = stat_scratch([chanel], "testdata/EGE/" + eeg_file_dict[key][1] + ".edf")
-            cond_entropy_f = conditional_entropy(local_rank_coding(avg_fiter(eeg, filter_window_size, filter_count), rank_quantity), 1, 10)
+            eeg_nonspec = get_data_from_chanel(chanel, "testdata/EGE/" + eeg_file_dict[key][1] + ".edf")
+            lead_eeg_nonspec = get_lead_name_by_channel(chanel, "testdata/EGE/" + eeg_file_dict[key][1] + ".edf")
+            cond_entropy_f = conditional_entropy(local_rank_coding(avg_fiter(eeg_nonspec, filter_window_size, filter_count), rank_quantity), 1, 10)
 
-            eeg_c, lead_eeg_c = stat_scratch([chanel], "testdata/EGE/" + eeg_file_dict[key][2] + ".edf")
-            cond_entropy_c = conditional_entropy(local_rank_coding(avg_fiter(eeg, filter_window_size, filter_count), rank_quantity), 1, 10)
+            eeg_control = get_data_from_chanel(chanel, "testdata/EGE/" + eeg_file_dict[key][2] + ".edf")
+            lead_eeg_control = get_lead_name_by_channel(chanel, "testdata/EGE/" + eeg_file_dict[key][2] + ".edf")
+            cond_entropy_c = conditional_entropy(local_rank_coding(avg_fiter(eeg_control, filter_window_size, filter_count), rank_quantity), 1, 10)
+
+            if lead_eeg_spec != lead_eeg_nonspec:
+                print('lead_eeg_spec != lead_eeg_nonspec')
+            if lead_eeg_spec != lead_eeg_control:
+                print('lead_eeg_spec != lead_eeg_control')
 
             fig, ax1 = plt.subplots()
-            ax1.set_title('Испытуемый ' + eeg_file_dict[key][0][0] + ' отведение ' + lead_eeg[4:], fontsize=15)
+            ax1.set_title('Испытуемый ' + eeg_file_dict[key][0][0] + ' отведение ' + lead_eeg_spec[4:], fontsize=15)
             fig.set_size_inches(5, 5)
 
             ax1.plot(cond_entropy, linewidth=0.8, color='green')
@@ -373,8 +389,8 @@ def plot_cond_entropy(eeg_file_dict):
 
             fig.tight_layout()
             print('exam ' + eeg_file_dict[key][0][0] + ' chanel ' + str(chanel) + ' done')
-            plt.savefig(folder_name_for_cond_entropy + 'ex' + eeg_file_dict[key][0][0] + lead_eeg[4:] + '.png', format='png')
-            text_file = open(folder_name_for_cond_entropy + 'ex' + eeg_file_dict[key][0][0] + lead_eeg[4:] + '.txt', 'w')
+            plt.savefig(folder_name_for_cond_entropy + 'ex' + eeg_file_dict[key][0][0] + lead_eeg_spec[4:] + '.png', format='png')
+            text_file = open(folder_name_for_cond_entropy + 'ex' + eeg_file_dict[key][0][0] + lead_eeg_spec[4:] + '.txt', 'w')
             text_file.write(str(cond_entropy)+'\n'+str(cond_entropy_f)+'\n'+str(cond_entropy_c))
             text_file.close()
             plt.clf()
@@ -401,24 +417,31 @@ def plot_eeg_entropy():
         os.makedirs(folder_name)
     for key in eeg_file_dict.keys():
         for chanel in range(10):
-            eeg, lead_eeg = stat_scratch([chanel], "testdata/"+eeg_file_dict[key][0]+".edf")
-            ent = shanon_entropy(local_rank_coding(avg_fiter(eeg, filter_window_size, filter_count), rank_quantity), window_size)
+            eeg_spec = get_data_from_chanel(chanel, "testdata/EGE/" + eeg_file_dict[key][0] + ".edf")
+            lead_eeg_spec = get_lead_name_by_channel(chanel, "testdata/EGE/" + eeg_file_dict[key][0] + ".edf")
+            ent_spec = shanon_entropy(local_rank_coding(avg_fiter(eeg_spec, filter_window_size, filter_count), rank_quantity), window_size)
             # plt.plot(ent, linewidth=0.2, color = 'green')
 
-            eeg_f, lead_eeg_f = stat_scratch([chanel], "testdata/"+eeg_file_dict[key][1]+".edf")
-            ent_f = shanon_entropy(local_rank_coding(avg_fiter(eeg_f, filter_window_size, filter_count), rank_quantity), window_size)
+            eeg_nonspec = get_data_from_chanel(chanel, "testdata/EGE/" + eeg_file_dict[key][1] + ".edf")
+            lead_eeg_nonspec = get_lead_name_by_channel(chanel, "testdata/EGE/" + eeg_file_dict[key][1] + ".edf")
+            ent_nonspec = shanon_entropy(local_rank_coding(avg_fiter(eeg_nonspec, filter_window_size, filter_count), rank_quantity), window_size)
             # plt.plot(ent_f, linewidth=0.2, color = 'red')
 
-            eeg_c, lead_eeg_c = stat_scratch([chanel], "testdata/"+eeg_file_dict[key][2]+".edf")
-            ent_c = shanon_entropy(local_rank_coding(avg_fiter(eeg_c, filter_window_size, filter_count), rank_quantity), window_size)
+            eeg_control = get_data_from_chanel(chanel, "testdata/EGE/" + eeg_file_dict[key][2] + ".edf")
+            lead_eeg_control = get_lead_name_by_channel(chanel, "testdata/EGE/" + eeg_file_dict[key][2] + ".edf")
+            ent_control = shanon_entropy(local_rank_coding(avg_fiter(eeg_control, filter_window_size, filter_count), rank_quantity), window_size)
             # plt.plot(ent_c, linewidth=0.2, color = 'blue')
 
+            if lead_eeg_spec != lead_eeg_nonspec:
+                print('lead_eeg_spec != lead_eeg_nonspec')
+            if lead_eeg_spec != lead_eeg_control:
+                print('lead_eeg_spec != lead_eeg_control')
+
             fig, ax1 = plt.subplots()
-            ax1.set_title('Испытуемый '+eeg_file_dict[key][0][0]+' отведение '+lead_eeg[4:], fontsize=15)
+            ax1.set_title('Испытуемый '+eeg_file_dict[key][0][0]+' отведение '+lead_eeg_spec[4:], fontsize=15)
             fig.set_size_inches(15, 5)
 
-
-            ax1.plot(np.hstack((eeg_c,eeg,eeg_f)), linewidth=0.2, color = 'black')
+            ax1.plot(np.hstack((eeg_control,eeg_spec,eeg_nonspec)), linewidth=0.2, color = 'black')
             ax1.set_ylabel('µV', color='black')
             ax1.set_ylim(-40, 160)
 
@@ -429,7 +452,7 @@ def plot_eeg_entropy():
             ax1.axvline(x=60000, color='red', linestyle='--', linewidth=4)
 
             ax2 = ax1.twinx()
-            ax2.plot(np.hstack((ent_c, ent, ent_f)), linewidth=0.4, color='green')
+            ax2.plot(np.hstack((ent_control, ent_spec, ent_nonspec)), linewidth=0.4, color='green')
             ax2.set_ylabel('Энтропия Шеннона, окно '+str(window_size)+' отсчетов', color='green')
             ax2.tick_params('y', colors='green')
 
@@ -444,7 +467,7 @@ def plot_eeg_entropy():
 
         fig.tight_layout()
         print('exam '+eeg_file_dict[key][0][0]+' chanel '+str(chanel)+' done')
-        plt.savefig(folder_name+'ex'+eeg_file_dict[key][0][0]+lead_eeg[4:]+'.png', format='png')
+        plt.savefig(folder_name+'ex'+eeg_file_dict[key][0][0]+lead_eeg_spec[4:]+'.png', format='png')
         plt.clf()
         # plt.show()
 
@@ -562,13 +585,6 @@ def spectral_analyzis(Signal, SignalFreq, Band, EpochStart=0, EpochStop=None, DF
     return Power, PowerRatio, PowerFreq
 
 
-# stat_scratch([chanel], "testdata/"+eeg_file_dict[1][0]+".edf")
-# Power, PowerRatio, PowerFreq = spectral_analyzis(eeg, 500, [0.5, 4, 8, 13, 40], 0, 30000, 1)
-# print("Power = "+str(Power))
-# print("PowerRatio = "+str(PowerRatio))
-# print("Sum" + str(sum(PowerRatio)))
-# print("PowerFreq= "+str(PowerFreq))
-
 def spectral_window(signal, Band, SignalFreq, windowSize=512, windowShift=1):
     '''
     :param signal:
@@ -579,36 +595,50 @@ def spectral_window(signal, Band, SignalFreq, windowSize=512, windowShift=1):
     :return:
     '''
     l = len(signal)
-    Power = np.zeros((l//windowShift, len(Band)-1))
-    PowerRatio = np.zeros((l//windowShift, len(Band)-1))
+    Power = np.zeros(( ((l-windowSize)//windowShift) + 1, len(Band) - 1 ))
+    PowerRatio = np.zeros(( ((l-windowSize)//windowShift) + 1, len(Band) - 1 ))
     PowerFreq = np.zeros(len(Band))
     iter = 0
     for i in range(0, l-windowSize, windowShift):
         Power[iter], PowerRatio[iter], PowerFreq = spectral_analyzis(signal, SignalFreq, Band, i, i+windowSize)
-        # print('for i = '+str(i)+' PowerRatio = '+ str(PowerRatio[iter]))
         iter += 1
     return Power, PowerRatio
+Power, PowerRatio = spectral_window(eeg, [0.5, 4, 8, 13, 40], 500, windowSize=512, windowShift=64)
 
-Power, PowerRatio = spectral_window(eeg, [0.5, 4, 8, 13, 40], 500, windowSize=1024, windowShift=128)
 
 def plot_spectral_window(data):
     fig, ax1 = plt.subplots()
-    # ax1.set_title('Испытуемый ' + eeg_file_dict[key][0][0] + ' отведение ' + lead_eeg[4:], fontsize=15)
-
-    ax1.fill_between(range(len(data)),
-                     [data[i][0] for i in range(len(data))], y2=0,
-                     color='green', linewidth=0.5, alpha=0.3)
-    ax1.fill_between(range(len(data)),
-                     [data[i][0]+data[i][1] for i in range(len(data))], [data[i][0] for i in range(len(data))],
-                     color='blue', linewidth=0.5, alpha=0.3)
-    ax1.fill_between(range(len(data)),
-                     [data[i][0]+data[i][1]+data[i][2] for i in range(len(data))], [data[i][0]+data[i][1] for i in range(len(data))],
-                     color='yellow', linewidth=0.5, alpha=0.3)
-    ax1.fill_between(range(len(data)),
-                     [data[i][0]+data[i][1]+data[i][2]+data[i][3] for i in range(len(data))], [data[i][0]+data[i][1]+data[i][2] for i in range(len(data))],
-                     color='red', linewidth=0.5, alpha=0.3)
+    start_data = np.zeros(len(data))
+    for iter in range(np.shape(data)[1]):
+        plot_data = start_data + data[:, iter]
+        ax1.fill_between(range(len(data)), plot_data, start_data, alpha=0.5)
+        start_data = plot_data
     plt.show()
+# plot_spectral_window(PowerRatio)
+
+def plot_spectral_entropy(data, entropy_type):
+    print('shape of data is '+str(np.shape(data)))
+    fig, ax1 = plt.subplots()
+    for band in range(np.shape(data)[1]):
+        if entropy_type == 'ap':
+            ax1.plot(aproximate_entropy(data[:, band], m_min=1, m_max=6, r=None, phase_width=0.2))
+        if entropy_type == 'ce':
+            ax1.plot(conditional_entropy(local_rank_coding(data[:, band], rank_quantity), 1, 10))
+        if entropy_type == 'se':
+            ax1.plot(shanon_entropy())
+    plt.show()
+# plot_spectral_entropy(PowerRatio, 'ce')
 
 
-plot_spectral_window(PowerRatio)
-
+def spectral_entropy(data):
+    print('shape of data is ' + str(np.shape(data)))
+    fig, ax1 = plt.subplots()
+    SEN = np.zeros(np.shape(data)[0])
+    for iter in range(np.shape(data)[0]):
+        for i in range(np.shape(data)[1]):
+            SEN[iter] += data[iter,i]*np.log(data[iter,i])
+    SEN /= np.log(np.shape(data)[1])
+    ax1.plot(-SEN)
+    plt.show()
+    return -SEN
+# spectral_entropy(PowerRatio)
